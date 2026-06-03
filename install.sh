@@ -163,6 +163,37 @@ HOST=0.0.0.0
 EOF
 ok "Google Workspace MCP — 230 tools (Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail, People, Forms)"
 
+# ── Meeting Transcript (Python + BlackHole + Whisper) ────────────────────────
+
+say "Installing Meeting Transcript MCP..."
+MT_DIR="$INSTALL_DIR/meeting-transcript"
+mkdir -p "$MT_DIR/transcripts"
+
+for f in server.py capture.py watcher.py setup-audio.sh requirements.txt; do
+    [[ -f "$PACKAGES_DIR/meeting-transcript/$f" ]] && cp "$PACKAGES_DIR/meeting-transcript/$f" "$MT_DIR/"
+done
+chmod +x "$MT_DIR/setup-audio.sh" 2>/dev/null || true
+
+$PYTHON -m venv "$MT_DIR/.venv"
+"$MT_DIR/.venv/bin/pip" install -q -r "$MT_DIR/requirements.txt"
+ok "Meeting Transcript — dependencies installed"
+
+say "Installing BlackHole 2ch (virtual audio driver)..."
+brew install blackhole-2ch 2>/dev/null || ok "BlackHole already installed"
+ok "BlackHole 2ch ready"
+
+say "Downloading Whisper model 'small' (~500MB, one-time)..."
+"$MT_DIR/.venv/bin/python3" -c "
+from faster_whisper import WhisperModel
+model = WhisperModel('small', device='cpu', compute_type='int8')
+print('  Model cached.')
+" 2>&1 | tail -1
+ok "Meeting Transcript MCP — live transcription with auto audio passthrough"
+
+# Fix watcher.py Python path
+MT_PYTHON="$MT_DIR/.venv/bin/python3"
+sed -i '' "s|PYTHON = .*|PYTHON = Path(\"$MT_PYTHON\")|" "$MT_DIR/watcher.py" 2>/dev/null || true
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CLAUDE DESKTOP CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
@@ -191,6 +222,10 @@ MCP_CONFIG=$(cat << MCPEOF
       "GOOGLE_REDIRECT_URI": "http://localhost:3001/oauth/callback",
       "PORT": "3001"
     }
+  },
+  "meeting-transcript": {
+    "command": "$MT_PYTHON",
+    "args": ["$MT_DIR/server.py"]
   }
 }
 MCPEOF
@@ -238,8 +273,10 @@ cat << SUMMARY
   📦 Trello             — 60 tools  (boards, cards, labels, checklists)
   📦 Google Workspace   — 230 tools (Drive, Docs, Sheets, Slides,
                                      Calendar, Tasks, Gmail, People, Forms)
+  📦 Meeting Transcript — live Zoom transcription (Whisper AI, auto-detect
+                          audio devices, headphone passthrough)
   ─────────────────────────────────────────────────────────
-  Total: 300 tools
+  Total: 300+ tools + live transcription
 
   ┌─────────────────────────────────────────────────────┐
   │  ⚠️  NEXT STEPS (manual):                            │
@@ -263,7 +300,13 @@ cat << SUMMARY
         GOOGLE_CLIENT_ID=your_id
         GOOGLE_CLIENT_SECRET=your_secret
 
-  4. RESTART Claude Desktop: Cmd+Q → reopen
+  4. MEETING TRANSCRIPT (Zoom recording):
+     In Zoom → Settings → Audio → Speaker → select "BlackHole 2ch"
+     That's it! Audio passthrough is automatic (headphones OK).
+     To auto-record: $MT_PYTHON $MT_DIR/watcher.py
+     Or manual:      $MT_PYTHON $MT_DIR/capture.py
+
+  5. RESTART Claude Desktop: Cmd+Q → reopen
 
   Log: $LOG
 
