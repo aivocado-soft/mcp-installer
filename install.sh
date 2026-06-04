@@ -135,10 +135,14 @@ if command -v claude &>/dev/null; then
 else
     say "Installing Claude CLI..."
     curl -fsSL https://claude.ai/install.sh | sh
-    export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"
-    if [[ -f "$HOME/.zshrc" ]]; then
-        grep -q '.local/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
-    fi
+    # Add ALL possible Claude paths
+    export PATH="$HOME/.local/bin:$HOME/.claude/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    # Persist in .zshrc (idempotent)
+    touch "$HOME/.zshrc"
+    grep -q '.local/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"' >> "$HOME/.zshrc"
+    grep -q '.claude/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/.claude/bin:$PATH"' >> "$HOME/.zshrc"
+    # Also add brew PATH if missing
+    grep -q '/opt/homebrew/bin' "$HOME/.zshrc" 2>/dev/null || echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zshrc"
     command -v claude &>/dev/null && ok "Claude CLI installed" || warn "Claude CLI installed — restart terminal to use"
 fi
 
@@ -389,13 +393,23 @@ SUMMARY
 
 # ── Launch Claude CLI ────────────────────────────────────────────────────────
 say "Launching Claude CLI..."
-# Refresh PATH so claude is available
 export PATH="$HOME/.local/bin:$HOME/.claude/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-if command -v claude &>/dev/null; then
+# Find claude binary explicitly
+CLAUDE_BIN=""
+for p in "$HOME/.local/bin/claude" "$HOME/.claude/bin/claude" "$(command -v claude 2>/dev/null)"; do
+    [[ -x "$p" ]] && { CLAUDE_BIN="$p"; break; }
+done
+
+if [[ -n "$CLAUDE_BIN" ]]; then
     say "Opening Claude — paste your API keys when prompted."
     echo ""
-    exec claude
+    exec "$CLAUDE_BIN"
 else
-    warn "Claude CLI not in PATH. Close this terminal, open a new one, and run: claude"
+    echo ""
+    warn "Claude CLI installed but needs a new terminal session."
+    echo "  Close this terminal, open a new one, and run:"
+    echo ""
+    echo "    claude"
+    echo ""
 fi
