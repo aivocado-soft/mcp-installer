@@ -332,3 +332,16 @@ cat << SUMMARY
   Log: $LOG
 
 SUMMARY
+
+# ── Launch Claude CLI ────────────────────────────────────────────────────────
+say "Launching Claude CLI..."
+# Refresh PATH so claude is available
+export PATH="$HOME/.local/bin:$HOME/.claude/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+if command -v claude &>/dev/null; then
+    say "Opening Claude — paste your API keys when prompted."
+    echo ""
+    exec claude
+else
+    warn "Claude CLI not in PATH. Close this terminal, open a new one, and run: claude"
+fi
