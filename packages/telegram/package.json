@@ -1,0 +1,61 @@
+{
+  "name": "@tonresistor/telegram-mcp",
+  "version": "1.0.0",
+  "description": "Production-ready MCP Server for Telegram Bot API - 162 methods with token-optimized meta mode",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "telegram-mcp": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "start:meta": "node build/index-meta.js",
+    "dev": "tsc --watch",
+    "clean": "rm -rf build",
+    "rebuild": "npm run clean && npm run build",
+    "prepublishOnly": "npm run rebuild && npm test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TONresistor/telegram-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TONresistor/telegram-mcp/issues"
+  },
+  "homepage": "https://github.com/TONresistor/telegram-mcp#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "prom-client": "^15.1.3",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.0.17",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.17"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "telegram",
+    "bot",
+    "model-context-protocol",
+    "api",
+    "chatbot",
+    "messaging",
+    "ai-tools"
+  ],
+  "author": "TONresistor",
+  "license": "MIT"
+}

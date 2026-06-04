@@ -222,6 +222,33 @@ else
     warn "Apple Reminders package not found — skipping"
 fi
 
+# ── Telegram (TypeScript, Bot API) ───────────────────────────────────────────
+say "Installing Telegram MCP..."
+TG_DIR="$INSTALL_DIR/telegram"
+
+if [[ -d "$PACKAGES_DIR/telegram" ]]; then
+    mkdir -p "$TG_DIR"
+    rsync -a --exclude='node_modules' "$PACKAGES_DIR/telegram/" "$TG_DIR/"
+    cd "$TG_DIR"
+    npm install --silent 2>/dev/null
+
+    # Build if needed
+    if [[ ! -f "$TG_DIR/build/index.js" ]]; then
+        npm run build --silent 2>/dev/null
+    fi
+
+    [[ ! -f "$TG_DIR/.env" ]] && cat > "$TG_DIR/.env" << 'EOF'
+# 1. Open Telegram, talk to @BotFather, /newbot
+# 2. Copy the token below
+TELEGRAM_BOT_TOKEN=
+# 3. Talk to @userinfobot to get your user ID
+TELEGRAM_DEFAULT_CHAT_ID=
+EOF
+    ok "Telegram MCP — 176 tools (messages, chats, stickers, payments, gifts, business, inline)"
+else
+    warn "Telegram package not found — skipping"
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CLAUDE DESKTOP CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
@@ -254,6 +281,14 @@ MCP_CONFIG=$(cat << MCPEOF
   "apple-reminders": {
     "command": "/usr/local/bin/node",
     "args": ["$REM_DIR/dist/index.js"]
+  },
+  "telegram": {
+    "command": "node",
+    "args": ["$TG_DIR/build/index.js"],
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "",
+      "TELEGRAM_DEFAULT_CHAT_ID": ""
+    }
   }
 }
 MCPEOF
@@ -302,9 +337,11 @@ cat << SUMMARY
   Google Workspace   — 230 tools (Drive, Docs, Sheets, Slides,
                                    Calendar, Tasks, Gmail, People, Forms)
   Apple Reminders    — 11 tools  (lists, reminders, alarms, recurrence)
+  Telegram           — 176 tools (messages, chats, stickers, payments,
+                                   gifts, business, inline, verification)
   Claude CLI         — installed and ready
   ─────────────────────────────────────────────────────────
-  Total: 311 tools
+  Total: 487 tools
 
   NEXT STEPS:
 
@@ -324,10 +361,15 @@ cat << SUMMARY
      d) Enable APIs: Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail
      e) Edit: $GW_DIR/.env
 
-  4. APPLE REMINDERS:
+  4. TELEGRAM:
+     Create bot: @BotFather in Telegram → /newbot
+     Get user ID: @userinfobot in Telegram
+     Edit: $TG_DIR/.env
+
+  5. APPLE REMINDERS:
      No keys needed — grant access when macOS asks for Reminders permission.
 
-  5. RESTART Claude Desktop: Cmd+Q → reopen
+  6. RESTART Claude Desktop: Cmd+Q → reopen
 
   Log: $LOG
 
