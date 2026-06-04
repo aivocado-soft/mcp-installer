@@ -38,7 +38,8 @@ BANNER
 say "macOS $(sw_vers -productVersion)"
 
 # ── Self-bootstrap: if run via curl|bash, clone repo first ────────────────────
-if [[ "${BASH_SOURCE[0]}" == "" ]] || [[ ! -d "$(dirname "${BASH_SOURCE[0]}")/packages" ]]; then
+SELF="${BASH_SOURCE[0]:-}"
+if [[ -z "$SELF" ]] || [[ ! -d "$(dirname "$SELF")/packages" ]]; then
     say "Downloading installer..."
     REPO_DIR="/tmp/aivocado-mcp-installer-$$"
     if command -v git &>/dev/null; then
