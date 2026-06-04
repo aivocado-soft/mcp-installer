@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AiVocado MCP Installer v2
-# One-command setup: Homebrew → Python → Node → MCP connectors → Claude config
+# AiVocado MCP Installer v3
+# One-command setup: Homebrew → Python → Node → Claude CLI → MCP connectors
 #
 # Included:
 #   Fathom (10 tools) — meetings, transcripts, summaries
@@ -27,8 +27,8 @@ exec > >(tee -a "$LOG") 2>&1
 cat << 'BANNER'
 
   ╔════════════════════════════════════════════════════════╗
-  ║          🥑 AiVocado MCP Installer v2                 ║
-  ║   Fathom · Trello · Google Workspace (230 tools)      ║
+  ║          AiVocado MCP Installer v3                     ║
+  ║   Fathom · Trello · Google Workspace · Reminders       ║
   ╚════════════════════════════════════════════════════════╝
 
 BANNER
@@ -37,7 +37,21 @@ BANNER
 [[ "$(uname)" != "Darwin" ]] && { err "macOS only."; exit 1; }
 say "macOS $(sw_vers -productVersion)"
 
-# ── Find packages/ ───────────────────────────────────────────────────────────
+# ── Self-bootstrap: if run via curl|bash, clone repo first ────────────────────
+if [[ "${BASH_SOURCE[0]}" == "" ]] || [[ ! -d "$(dirname "${BASH_SOURCE[0]}")/packages" ]]; then
+    say "Downloading installer..."
+    REPO_DIR="/tmp/aivocado-mcp-installer-$$"
+    if command -v git &>/dev/null; then
+        git clone --depth 1 https://github.com/aivocado-soft/mcp-installer.git "$REPO_DIR" 2>&1 | tail -1
+    else
+        mkdir -p "$REPO_DIR"
+        curl -fsSL https://github.com/aivocado-soft/mcp-installer/archive/refs/heads/main.tar.gz \
+            | tar -xz -C "$REPO_DIR" --strip-components=1
+    fi
+    ok "Downloaded"
+    exec bash "$REPO_DIR/install.sh" "$@"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGES_DIR="$SCRIPT_DIR/packages"
 [[ ! -d "$PACKAGES_DIR" ]] && { err "packages/ not found at $PACKAGES_DIR"; exit 1; }
@@ -102,6 +116,20 @@ else
     ok "Node.js installed"
 fi
 
+# ── Claude CLI ──────────────────────────────────────────────────────────────
+say "Checking Claude CLI..."
+if command -v claude &>/dev/null; then
+    ok "Claude CLI already installed"
+else
+    say "Installing Claude CLI..."
+    curl -fsSL https://claude.ai/install.sh | sh
+    export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"
+    if [[ -f "$HOME/.zshrc" ]]; then
+        grep -q '.local/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+    fi
+    command -v claude &>/dev/null && ok "Claude CLI installed" || warn "Claude CLI installed — restart terminal to use"
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP CONNECTORS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -163,36 +191,36 @@ HOST=0.0.0.0
 EOF
 ok "Google Workspace MCP — 230 tools (Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail, People, Forms)"
 
-# ── Meeting Transcript (Python + BlackHole + Whisper) ────────────────────────
+# ── Apple Reminders (TypeScript + Swift) ─────────────────────────────────────
+say "Installing Apple Reminders MCP..."
+REM_DIR="$INSTALL_DIR/apple-reminders"
+mkdir -p "$REM_DIR/src" "$REM_DIR/dist"
 
-say "Installing Meeting Transcript MCP..."
-MT_DIR="$INSTALL_DIR/meeting-transcript"
-mkdir -p "$MT_DIR/transcripts"
+if [[ -d "$PACKAGES_DIR/apple-reminders" ]]; then
+    cp "$PACKAGES_DIR/apple-reminders/package.json" "$REM_DIR/"
+    cp "$PACKAGES_DIR/apple-reminders/tsconfig.json" "$REM_DIR/"
+    cp "$PACKAGES_DIR/apple-reminders/reminders-bridge.swift" "$REM_DIR/"
+    [[ -f "$PACKAGES_DIR/apple-reminders/reminders-bridge" ]] && cp "$PACKAGES_DIR/apple-reminders/reminders-bridge" "$REM_DIR/"
+    cp "$PACKAGES_DIR/apple-reminders/src/"*.ts "$REM_DIR/src/" 2>/dev/null || true
+    cp "$PACKAGES_DIR/apple-reminders/dist/"* "$REM_DIR/dist/" 2>/dev/null || true
 
-for f in server.py capture.py watcher.py setup-audio.sh requirements.txt; do
-    [[ -f "$PACKAGES_DIR/meeting-transcript/$f" ]] && cp "$PACKAGES_DIR/meeting-transcript/$f" "$MT_DIR/"
-done
-chmod +x "$MT_DIR/setup-audio.sh" 2>/dev/null || true
+    # Build if dist is empty
+    if [[ ! -f "$REM_DIR/dist/index.js" ]]; then
+        cd "$REM_DIR"
+        npm install --silent 2>/dev/null
+        npm run build --silent 2>/dev/null
+    fi
 
-$PYTHON -m venv "$MT_DIR/.venv"
-"$MT_DIR/.venv/bin/pip" install -q -r "$MT_DIR/requirements.txt"
-ok "Meeting Transcript — dependencies installed"
-
-say "Installing BlackHole 2ch (virtual audio driver)..."
-brew install blackhole-2ch 2>/dev/null || ok "BlackHole already installed"
-ok "BlackHole 2ch ready"
-
-say "Downloading Whisper model 'small' (~500MB, one-time)..."
-"$MT_DIR/.venv/bin/python3" -c "
-from faster_whisper import WhisperModel
-model = WhisperModel('small', device='cpu', compute_type='int8')
-print('  Model cached.')
-" 2>&1 | tail -1
-ok "Meeting Transcript MCP — live transcription with auto audio passthrough"
-
-# Fix watcher.py Python path
-MT_PYTHON="$MT_DIR/.venv/bin/python3"
-sed -i '' "s|PYTHON = .*|PYTHON = Path(\"$MT_PYTHON\")|" "$MT_DIR/watcher.py" 2>/dev/null || true
+    # Compile Swift bridge if binary not present
+    if [[ ! -f "$REM_DIR/reminders-bridge" ]] || [[ "$REM_DIR/reminders-bridge.swift" -nt "$REM_DIR/reminders-bridge" ]]; then
+        say "Compiling Swift bridge for Apple Reminders..."
+        swiftc -framework EventKit -framework CoreLocation -o "$REM_DIR/reminders-bridge" "$REM_DIR/reminders-bridge.swift" 2>/dev/null && \
+            ok "Swift bridge compiled" || warn "Swift compilation failed — Reminders may not work"
+    fi
+    ok "Apple Reminders MCP — 11 tools"
+else
+    warn "Apple Reminders package not found — skipping"
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CLAUDE DESKTOP CONFIG
@@ -223,9 +251,9 @@ MCP_CONFIG=$(cat << MCPEOF
       "PORT": "3001"
     }
   },
-  "meeting-transcript": {
-    "command": "$MT_PYTHON",
-    "args": ["$MT_DIR/server.py"]
+  "apple-reminders": {
+    "command": "/usr/local/bin/node",
+    "args": ["$REM_DIR/dist/index.js"]
   }
 }
 MCPEOF
@@ -269,26 +297,24 @@ cat << SUMMARY
 
   Location: $INSTALL_DIR
 
-  📦 Fathom             — 10 tools  (meetings, transcripts, summaries)
-  📦 Trello             — 60 tools  (boards, cards, labels, checklists)
-  📦 Google Workspace   — 230 tools (Drive, Docs, Sheets, Slides,
-                                     Calendar, Tasks, Gmail, People, Forms)
-  📦 Meeting Transcript — live Zoom transcription (Whisper AI, auto-detect
-                          audio devices, headphone passthrough)
+  Fathom             — 10 tools  (meetings, transcripts, summaries)
+  Trello             — 60 tools  (boards, cards, labels, checklists)
+  Google Workspace   — 230 tools (Drive, Docs, Sheets, Slides,
+                                   Calendar, Tasks, Gmail, People, Forms)
+  Apple Reminders    — 11 tools  (lists, reminders, alarms, recurrence)
+  Claude CLI         — installed and ready
   ─────────────────────────────────────────────────────────
-  Total: 300+ tools + live transcription
+  Total: 311 tools
 
-  ┌─────────────────────────────────────────────────────┐
-  │  ⚠️  NEXT STEPS (manual):                            │
-  └─────────────────────────────────────────────────────┘
+  NEXT STEPS:
 
   1. FATHOM:
-     Get key → https://fathom.video/settings → API
+     Get key: https://fathom.video/settings → API
      Edit: $FATHOM_DIR/.env
 
   2. TRELLO:
-     Get key → https://trello.com/power-ups/admin
-     Get token → link in $TRELLO_DIR/.env
+     Get key: https://trello.com/power-ups/admin
+     Token: link in $TRELLO_DIR/.env
      Edit: $TRELLO_DIR/.env
 
   3. GOOGLE WORKSPACE:
@@ -297,14 +323,9 @@ cat << SUMMARY
      c) Add redirect URI: http://localhost:3001/oauth/callback
      d) Enable APIs: Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail
      e) Edit: $GW_DIR/.env
-        GOOGLE_CLIENT_ID=your_id
-        GOOGLE_CLIENT_SECRET=your_secret
 
-  4. MEETING TRANSCRIPT (Zoom recording):
-     In Zoom → Settings → Audio → Speaker → select "BlackHole 2ch"
-     That's it! Audio passthrough is automatic (headphones OK).
-     To auto-record: $MT_PYTHON $MT_DIR/watcher.py
-     Or manual:      $MT_PYTHON $MT_DIR/capture.py
+  4. APPLE REMINDERS:
+     No keys needed — grant access when macOS asks for Reminders permission.
 
   5. RESTART Claude Desktop: Cmd+Q → reopen
 

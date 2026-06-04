@@ -1,0 +1,35 @@
+export declare function getLists(): any[];
+export declare function createList(name: string): any;
+export declare function renameList(listId: string, newName: string): any;
+export declare function deleteList(listId: string): any;
+export declare function getReminders(listName?: string, includeCompleted?: boolean): any[];
+export declare function searchReminders(query: string, includeCompleted?: boolean): any[];
+export declare function createReminder(params: {
+    title: string;
+    listName?: string;
+    body?: string;
+    dueDate?: string;
+    startDate?: string;
+    priority?: number;
+    url?: string;
+    location?: string;
+    alarms?: any[];
+    recurrence?: string;
+    timezone?: string;
+}): any;
+export declare function completeReminder(reminderId: string): boolean;
+export declare function uncompleteReminder(reminderId: string): boolean;
+export declare function updateReminder(reminderId: string, fields: {
+    title?: string;
+    body?: string;
+    dueDate?: string;
+    startDate?: string;
+    priority?: number;
+    url?: string;
+    location?: string;
+    alarms?: any[] | "__clear__";
+    listName?: string;
+    recurrence?: string | "__clear__";
+    timezone?: string;
+}): any;
+export declare function deleteReminder(reminderId: string): boolean;
