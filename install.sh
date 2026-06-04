@@ -37,6 +37,17 @@ BANNER
 [[ "$(uname)" != "Darwin" ]] && { err "macOS only."; exit 1; }
 say "macOS $(sw_vers -productVersion)"
 
+# ── Xcode Command Line Tools (required for git, compilers) ───────────────────
+if ! xcode-select -p &>/dev/null; then
+    say "Installing Xcode Command Line Tools (required)..."
+    xcode-select --install 2>/dev/null
+    say "Waiting for Xcode CLT install — click Install in the popup..."
+    until xcode-select -p &>/dev/null; do sleep 5; done
+    ok "Xcode Command Line Tools installed"
+else
+    ok "Xcode CLT ready"
+fi
+
 # ── Self-bootstrap: if run via curl|bash, clone repo first ────────────────────
 SELF="${BASH_SOURCE[0]:-}"
 if [[ -z "$SELF" ]] || [[ ! -d "$(dirname "$SELF")/packages" ]]; then
