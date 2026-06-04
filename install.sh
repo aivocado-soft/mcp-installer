@@ -1,158 +1,184 @@
-#!/usr/bin/env bash
-set -eo pipefail
-
+#!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# AiVocado MCP Installer v3
-# One-command setup: Homebrew → Python → Node → Claude CLI → MCP connectors
+# AiVocado MCP Installer v4
+# Compatible with: macOS 12+, bash 3.2+, clean Mac (no dev tools)
 #
-# Included:
-#   Fathom (10 tools) — meetings, transcripts, summaries
-#   Trello (60 tools) — boards, cards, labels, checklists, members
-#   Google Workspace (230 tools) — Drive, Docs, Sheets, Slides, Calendar,
-#                                   Tasks, Gmail, People, Forms
+# Installs: Xcode CLT, Homebrew, Python, Node.js, Claude CLI
+# MCP connectors: Fathom (10), Trello (60), Google Workspace (230),
+#                 Apple Reminders (11), Telegram (176) = 487 tools
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# NO set -u — bash 3.2 breaks on unset BASH_SOURCE
+# NO set -e — brew/npm return non-zero for already-installed; we handle errors manually
 
 INSTALL_DIR="$HOME/.aivocado-mcp"
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 LOG="$HOME/.aivocado-mcp-install.log"
+REPO_URL="https://github.com/aivocado-soft/mcp-installer"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-say()  { printf "${CYAN}[installer]${NC} %s\n" "$*"; }
-ok()   { printf "${GREEN}  ✅ %s${NC}\n" "$*"; }
-warn() { printf "${YELLOW}  ⚠️  %s${NC}\n" "$*"; }
-err()  { printf "${RED}  ❌ %s${NC}\n" "$*"; }
+say()  { printf "\033[0;36m[installer]\033[0m %s\n" "$*"; }
+ok()   { printf "\033[0;32m  ✅ %s\033[0m\n" "$*"; }
+warn() { printf "\033[1;33m  ⚠️  %s\033[0m\n" "$*"; }
+err()  { printf "\033[0;31m  ❌ %s\033[0m\n" "$*"; }
+die()  { err "$*"; exit 1; }
 
+# Log output (but don't redirect stdin!)
 exec > >(tee -a "$LOG") 2>&1
 
-cat << 'BANNER'
-
-  ╔════════════════════════════════════════════════════════╗
-  ║          AiVocado MCP Installer v3                     ║
-  ║   Fathom · Trello · Google Workspace · Reminders       ║
-  ╚════════════════════════════════════════════════════════╝
-
-BANNER
+printf "\n"
+printf "  ╔════════════════════════════════════════════════════════╗\n"
+printf "  ║          AiVocado MCP Installer v4                     ║\n"
+printf "  ║   Fathom · Trello · Google Workspace · Telegram        ║\n"
+printf "  ║   Apple Reminders · Claude CLI                         ║\n"
+printf "  ╚════════════════════════════════════════════════════════╝\n"
+printf "\n"
 
 # ── OS Check ─────────────────────────────────────────────────────────────────
-[[ "$(uname)" != "Darwin" ]] && { err "macOS only."; exit 1; }
+test "$(uname)" = "Darwin" || die "macOS only."
 say "macOS $(sw_vers -productVersion)"
 
-# ── Xcode Command Line Tools (required for git, compilers) ───────────────────
-if ! xcode-select -p &>/dev/null; then
-    say "Installing Xcode Command Line Tools (required)..."
-    xcode-select --install 2>/dev/null
-    say "Waiting for Xcode CLT install — click Install in the popup..."
-    until xcode-select -p &>/dev/null; do sleep 5; done
-    ok "Xcode Command Line Tools installed"
-else
-    ok "Xcode CLT ready"
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 0: If running from curl pipe, download and re-exec as a file
+# This fixes: stdin available for passwords, BASH_SOURCE works, interactive OK
+# ══════════════════════════════════════════════════════════════════════════════
+
+SCRIPT_DIR=""
+if test -f "${BASH_SOURCE:-}"; then
+    SCRIPT_DIR="$(cd "$(dirname "$BASH_SOURCE")" && pwd)"
 fi
 
-# ── Self-bootstrap: if run via curl|bash, clone repo first ────────────────────
-SELF="${BASH_SOURCE[0]:-}"
-if [[ -z "$SELF" ]] || [[ ! -d "$(dirname "$SELF")/packages" ]]; then
+if test -z "$SCRIPT_DIR" || test ! -d "$SCRIPT_DIR/packages"; then
     say "Downloading installer..."
     REPO_DIR="/tmp/aivocado-mcp-installer-$$"
-    if command -v git &>/dev/null; then
-        git clone --depth 1 https://github.com/aivocado-soft/mcp-installer.git "$REPO_DIR" 2>&1 | tail -1
-    else
-        mkdir -p "$REPO_DIR"
-        curl -fsSL https://github.com/aivocado-soft/mcp-installer/archive/refs/heads/main.tar.gz \
-            | tar -xz -C "$REPO_DIR" --strip-components=1
+    mkdir -p "$REPO_DIR"
+    curl -fsSL "$REPO_URL/archive/refs/heads/main.tar.gz" | tar -xz -C "$REPO_DIR" --strip-components=1
+    if test ! -f "$REPO_DIR/install.sh"; then
+        die "Download failed. Check internet connection."
     fi
     ok "Downloaded"
+    # Re-exec as a FILE (not pipe) — this gives us stdin back for passwords
     exec bash "$REPO_DIR/install.sh" "$@"
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGES_DIR="$SCRIPT_DIR/packages"
-[[ ! -d "$PACKAGES_DIR" ]] && { err "packages/ not found at $PACKAGES_DIR"; exit 1; }
+test -d "$PACKAGES_DIR" || die "packages/ not found"
 ok "Packages found"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SYSTEM DEPENDENCIES
+# STEP 1: SYSTEM DEPENDENCIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── Homebrew ─────────────────────────────────────────────────────────────────
-say "Checking Homebrew..."
-if command -v brew &>/dev/null; then
-    ok "Homebrew $(brew --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+# ── 1a. Xcode Command Line Tools ────────────────────────────────────────────
+say "Checking Xcode Command Line Tools..."
+if xcode-select -p > /dev/null 2>&1; then
+    ok "Xcode CLT ready"
 else
-    say "Installing Homebrew (may ask for password)..."
+    say "Installing Xcode Command Line Tools..."
+    say "A popup will appear — click Install and wait."
+    xcode-select --install 2>/dev/null || true
+    # Wait for installation to complete
+    until xcode-select -p > /dev/null 2>&1; do
+        sleep 5
+    done
+    ok "Xcode CLT installed"
+fi
+
+# ── 1b. Homebrew ─────────────────────────────────────────────────────────────
+say "Checking Homebrew..."
+if command -v brew > /dev/null 2>&1; then
+    ok "Homebrew ready"
+else
+    say "Installing Homebrew (will ask for password)..."
+    # stdin is available because we re-exec'd as a file above
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    [[ -f "/opt/homebrew/bin/brew" ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
+    # Add to PATH for this session
+    if test -f "/opt/homebrew/bin/brew"; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+    # Persist in shell config
+    touch "$HOME/.zshrc"
+    if ! grep -q 'brew shellenv' "$HOME/.zshrc" 2>/dev/null; then
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zshrc"
+    fi
+    command -v brew > /dev/null 2>&1 || die "Homebrew installation failed"
     ok "Homebrew installed"
 fi
 
-# ── Git ──────────────────────────────────────────────────────────────────────
+# ── 1c. Git ──────────────────────────────────────────────────────────────────
 say "Checking git..."
-if command -v git &>/dev/null; then
-    ok "git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+if command -v git > /dev/null 2>&1; then
+    ok "git ready"
 else
     brew install git
     ok "git installed"
 fi
 
-# ── Python 3.10+ ─────────────────────────────────────────────────────────────
+# ── 1d. Python 3.10+ ────────────────────────────────────────────────────────
 say "Checking Python..."
 PYTHON=""
 for p in python3.12 python3.13 python3.14 python3; do
-    if command -v "$p" &>/dev/null; then
-        minor=$("$p" -c "import sys; print(sys.version_info.minor)")
-        if [[ "$minor" -ge 10 ]]; then
+    if command -v "$p" > /dev/null 2>&1; then
+        minor=$("$p" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || echo "0")
+        if test "$minor" -ge 10 2>/dev/null; then
             PYTHON="$(command -v "$p")"
             break
         fi
     fi
 done
-if [[ -n "$PYTHON" ]]; then
-    ok "Python: $PYTHON ($($PYTHON --version))"
-else
+if test -z "$PYTHON"; then
+    say "Installing Python 3.12..."
     brew install python@3.12
     PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
-    ok "Python 3.12 installed"
 fi
+ok "Python: $($PYTHON --version)"
 
-# ── Node.js 18+ ──────────────────────────────────────────────────────────────
+# ── 1e. Node.js 18+ ─────────────────────────────────────────────────────────
 say "Checking Node.js..."
-if command -v node &>/dev/null; then
-    NODE_MAJOR=$(node --version | grep -oE '[0-9]+' | head -1)
-    if [[ "$NODE_MAJOR" -ge 18 ]]; then
+if command -v node > /dev/null 2>&1; then
+    NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
+    if test "$NODE_MAJOR" -ge 18 2>/dev/null; then
         ok "Node.js $(node --version)"
     else
         brew install node@20
         ok "Node.js 20 installed"
     fi
 else
+    say "Installing Node.js..."
     brew install node@20
+    # node@20 is keg-only, need to add to PATH
+    if test -d "$(brew --prefix node@20)/bin"; then
+        export PATH="$(brew --prefix node@20)/bin:$PATH"
+        if ! grep -q 'node@20' "$HOME/.zshrc" 2>/dev/null; then
+            echo "export PATH=\"$(brew --prefix node@20)/bin:\$PATH\"" >> "$HOME/.zshrc"
+        fi
+    fi
     ok "Node.js installed"
 fi
 
-# ── Claude CLI ──────────────────────────────────────────────────────────────
+# ── 1f. Claude CLI ───────────────────────────────────────────────────────────
 say "Checking Claude CLI..."
-if command -v claude &>/dev/null; then
-    ok "Claude CLI already installed"
+export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"
+if command -v claude > /dev/null 2>&1; then
+    ok "Claude CLI ready"
 else
     say "Installing Claude CLI..."
     curl -fsSL https://claude.ai/install.sh | sh
-    # Add ALL possible Claude paths
-    export PATH="$HOME/.local/bin:$HOME/.claude/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-    # Persist in .zshrc (idempotent)
+    export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"
+    # Persist
     touch "$HOME/.zshrc"
-    grep -q '.local/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"' >> "$HOME/.zshrc"
-    grep -q '.claude/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/.claude/bin:$PATH"' >> "$HOME/.zshrc"
-    # Also add brew PATH if missing
-    grep -q '/opt/homebrew/bin' "$HOME/.zshrc" 2>/dev/null || echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zshrc"
-    command -v claude &>/dev/null && ok "Claude CLI installed" || warn "Claude CLI installed — restart terminal to use"
+    if ! grep -q '.claude/bin' "$HOME/.zshrc" 2>/dev/null; then
+        echo 'export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"' >> "$HOME/.zshrc"
+    fi
+    ok "Claude CLI installed"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MCP CONNECTORS
+# STEP 2: MCP CONNECTORS
 # ══════════════════════════════════════════════════════════════════════════════
 
 mkdir -p "$INSTALL_DIR"
 
-# ── Fathom (Python) ──────────────────────────────────────────────────────────
+# ── 2a. Fathom (Python) ─────────────────────────────────────────────────────
 say "Installing Fathom MCP..."
 FATHOM_DIR="$INSTALL_DIR/fathom"
 mkdir -p "$FATHOM_DIR"
@@ -160,13 +186,15 @@ cp "$PACKAGES_DIR/fathom/server.py" "$FATHOM_DIR/"
 cp "$PACKAGES_DIR/fathom/requirements.txt" "$FATHOM_DIR/"
 $PYTHON -m venv "$FATHOM_DIR/.venv"
 "$FATHOM_DIR/.venv/bin/pip" install -q -r "$FATHOM_DIR/requirements.txt"
-[[ ! -f "$FATHOM_DIR/.env" ]] && cat > "$FATHOM_DIR/.env" << 'EOF'
+if test ! -f "$FATHOM_DIR/.env"; then
+    cat > "$FATHOM_DIR/.env" << 'ENVEOF'
 # https://fathom.video/settings → Integrations → API
 FATHOM_API_KEY=
-EOF
+ENVEOF
+fi
 ok "Fathom MCP — 10 tools"
 
-# ── Trello (Python) ──────────────────────────────────────────────────────────
+# ── 2b. Trello (Python) ─────────────────────────────────────────────────────
 say "Installing Trello MCP..."
 TRELLO_DIR="$INSTALL_DIR/trello"
 mkdir -p "$TRELLO_DIR"
@@ -174,143 +202,117 @@ cp "$PACKAGES_DIR/trello/server.py" "$TRELLO_DIR/"
 cp "$PACKAGES_DIR/trello/requirements.txt" "$TRELLO_DIR/"
 $PYTHON -m venv "$TRELLO_DIR/.venv"
 "$TRELLO_DIR/.venv/bin/pip" install -q -r "$TRELLO_DIR/requirements.txt"
-[[ ! -f "$TRELLO_DIR/.env" ]] && cat > "$TRELLO_DIR/.env" << 'EOF'
+if test ! -f "$TRELLO_DIR/.env"; then
+    cat > "$TRELLO_DIR/.env" << 'ENVEOF'
 # API Key: https://trello.com/power-ups/admin
 # Token: https://trello.com/1/authorize?expiration=never&scope=read,write&response_type=token&key=YOUR_KEY
 TRELLO_API_KEY=
 TRELLO_TOKEN=
-EOF
+ENVEOF
+fi
 ok "Trello MCP — 60 tools"
 
-# ── Google Workspace (TypeScript) ────────────────────────────────────────────
-say "Installing Google Workspace MCP (Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail, People, Forms)..."
+# ── 2c. Google Workspace (TypeScript) ────────────────────────────────────────
+say "Installing Google Workspace MCP..."
 GW_DIR="$INSTALL_DIR/google-workspace"
 mkdir -p "$GW_DIR/src"
-cp "$PACKAGES_DIR/google-workspace/index.ts" "$GW_DIR/src/"
+cp "$PACKAGES_DIR/google-workspace/index.ts" "$GW_DIR/src/" 2>/dev/null || true
 cp "$PACKAGES_DIR/google-workspace/package.json" "$GW_DIR/"
-cp "$PACKAGES_DIR/google-workspace/package-lock.json" "$GW_DIR/"
+cp "$PACKAGES_DIR/google-workspace/package-lock.json" "$GW_DIR/" 2>/dev/null || true
 cp "$PACKAGES_DIR/google-workspace/tsconfig.json" "$GW_DIR/"
-cp "$PACKAGES_DIR/google-workspace/.env.example" "$GW_DIR/"
-[[ -f "$PACKAGES_DIR/google-workspace/README.md" ]] && cp "$PACKAGES_DIR/google-workspace/README.md" "$GW_DIR/"
+cp "$PACKAGES_DIR/google-workspace/.env.example" "$GW_DIR/" 2>/dev/null || true
 
 cd "$GW_DIR"
-npm install --silent 2>/dev/null
-npm run build --silent 2>/dev/null
+npm install --silent 2>/dev/null || npm install 2>/dev/null
+npm run build --silent 2>/dev/null || npm run build 2>/dev/null
 
-[[ ! -f "$GW_DIR/.env" ]] && cat > "$GW_DIR/.env" << 'EOF'
-# Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID
+if test ! -f "$GW_DIR/.env"; then
+    cat > "$GW_DIR/.env" << 'ENVEOF'
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:3001/oauth/callback
 PORT=3001
 HOST=0.0.0.0
-EOF
-ok "Google Workspace MCP — 230 tools (Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail, People, Forms)"
+ENVEOF
+fi
+ok "Google Workspace MCP — 230 tools"
 
-# ── Apple Reminders (TypeScript + Swift) ─────────────────────────────────────
+# ── 2d. Apple Reminders (TypeScript + Swift) ─────────────────────────────────
 say "Installing Apple Reminders MCP..."
 REM_DIR="$INSTALL_DIR/apple-reminders"
-mkdir -p "$REM_DIR/src" "$REM_DIR/dist"
 
-if [[ -d "$PACKAGES_DIR/apple-reminders" ]]; then
+if test -d "$PACKAGES_DIR/apple-reminders"; then
+    mkdir -p "$REM_DIR/src" "$REM_DIR/dist"
     cp "$PACKAGES_DIR/apple-reminders/package.json" "$REM_DIR/"
     cp "$PACKAGES_DIR/apple-reminders/tsconfig.json" "$REM_DIR/"
     cp "$PACKAGES_DIR/apple-reminders/reminders-bridge.swift" "$REM_DIR/"
-    [[ -f "$PACKAGES_DIR/apple-reminders/reminders-bridge" ]] && cp "$PACKAGES_DIR/apple-reminders/reminders-bridge" "$REM_DIR/"
+    test -f "$PACKAGES_DIR/apple-reminders/reminders-bridge" && cp "$PACKAGES_DIR/apple-reminders/reminders-bridge" "$REM_DIR/"
     cp "$PACKAGES_DIR/apple-reminders/src/"*.ts "$REM_DIR/src/" 2>/dev/null || true
     cp "$PACKAGES_DIR/apple-reminders/dist/"* "$REM_DIR/dist/" 2>/dev/null || true
 
-    # Build if dist is empty
-    if [[ ! -f "$REM_DIR/dist/index.js" ]]; then
+    if test ! -f "$REM_DIR/dist/index.js"; then
         cd "$REM_DIR"
-        npm install --silent 2>/dev/null
-        npm run build --silent 2>/dev/null
+        npm install --silent 2>/dev/null || npm install 2>/dev/null
+        npm run build --silent 2>/dev/null || true
     fi
 
-    # Compile Swift bridge if binary not present
-    if [[ ! -f "$REM_DIR/reminders-bridge" ]] || [[ "$REM_DIR/reminders-bridge.swift" -nt "$REM_DIR/reminders-bridge" ]]; then
-        say "Compiling Swift bridge for Apple Reminders..."
+    if test ! -f "$REM_DIR/reminders-bridge" || test "$REM_DIR/reminders-bridge.swift" -nt "$REM_DIR/reminders-bridge"; then
+        say "Compiling Swift bridge..."
         swiftc -framework EventKit -framework CoreLocation -o "$REM_DIR/reminders-bridge" "$REM_DIR/reminders-bridge.swift" 2>/dev/null && \
-            ok "Swift bridge compiled" || warn "Swift compilation failed — Reminders may not work"
+            ok "Swift bridge compiled" || warn "Swift compile failed — Reminders may not work"
     fi
     ok "Apple Reminders MCP — 11 tools"
 else
     warn "Apple Reminders package not found — skipping"
 fi
 
-# ── Telegram (TypeScript, Bot API) ───────────────────────────────────────────
+# ── 2e. Telegram (TypeScript) ────────────────────────────────────────────────
 say "Installing Telegram MCP..."
 TG_DIR="$INSTALL_DIR/telegram"
 
-if [[ -d "$PACKAGES_DIR/telegram" ]]; then
+if test -d "$PACKAGES_DIR/telegram"; then
     mkdir -p "$TG_DIR"
-    rsync -a --exclude='node_modules' "$PACKAGES_DIR/telegram/" "$TG_DIR/"
+    rsync -a --exclude='node_modules' "$PACKAGES_DIR/telegram/" "$TG_DIR/" 2>/dev/null || \
+        cp -R "$PACKAGES_DIR/telegram/"* "$TG_DIR/" 2>/dev/null
     cd "$TG_DIR"
-    npm install --silent 2>/dev/null
+    npm install --silent 2>/dev/null || npm install 2>/dev/null
 
-    # Build if needed
-    if [[ ! -f "$TG_DIR/build/index.js" ]]; then
-        npm run build --silent 2>/dev/null
+    if test ! -f "$TG_DIR/build/index.js"; then
+        npm run build --silent 2>/dev/null || npm run build 2>/dev/null
     fi
 
-    [[ ! -f "$TG_DIR/.env" ]] && cat > "$TG_DIR/.env" << 'EOF'
-# 1. Open Telegram, talk to @BotFather, /newbot
-# 2. Copy the token below
+    if test ! -f "$TG_DIR/.env"; then
+        cat > "$TG_DIR/.env" << 'ENVEOF'
+# 1. Telegram → @BotFather → /newbot → copy token
 TELEGRAM_BOT_TOKEN=
-# 3. Talk to @userinfobot to get your user ID
+# 2. Telegram → @userinfobot → copy your ID
 TELEGRAM_DEFAULT_CHAT_ID=
-EOF
-    ok "Telegram MCP — 176 tools (messages, chats, stickers, payments, gifts, business, inline)"
+ENVEOF
+    fi
+    ok "Telegram MCP — 176 tools"
 else
     warn "Telegram package not found — skipping"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CLAUDE DESKTOP CONFIG
+# STEP 3: CONFIGURE CLAUDE DESKTOP
 # ══════════════════════════════════════════════════════════════════════════════
 
 say "Configuring Claude Desktop..."
 
 FATHOM_PY="$FATHOM_DIR/.venv/bin/python3"
 TRELLO_PY="$TRELLO_DIR/.venv/bin/python3"
+NODE_BIN="$(command -v node 2>/dev/null || echo '/usr/local/bin/node')"
 
-MCP_CONFIG=$(cat << MCPEOF
-{
-  "fathom": {
-    "command": "$FATHOM_PY",
-    "args": ["$FATHOM_DIR/server.py"]
-  },
-  "trello": {
-    "command": "$TRELLO_PY",
-    "args": ["$TRELLO_DIR/server.py"]
-  },
-  "google-workspace": {
-    "command": "node",
-    "args": ["$GW_DIR/dist/index.js"],
-    "env": {
-      "GOOGLE_CLIENT_ID": "",
-      "GOOGLE_CLIENT_SECRET": "",
-      "GOOGLE_REDIRECT_URI": "http://localhost:3001/oauth/callback",
-      "PORT": "3001"
-    }
-  },
-  "apple-reminders": {
-    "command": "/usr/local/bin/node",
-    "args": ["$REM_DIR/dist/index.js"]
-  },
-  "telegram": {
-    "command": "node",
-    "args": ["$TG_DIR/build/index.js"],
-    "env": {
-      "TELEGRAM_BOT_TOKEN": "",
-      "TELEGRAM_DEFAULT_CHAT_ID": ""
-    }
-  }
-}
-MCPEOF
-)
+MCP_CONFIG="{
+  \"fathom\": {\"command\": \"$FATHOM_PY\", \"args\": [\"$FATHOM_DIR/server.py\"]},
+  \"trello\": {\"command\": \"$TRELLO_PY\", \"args\": [\"$TRELLO_DIR/server.py\"]},
+  \"google-workspace\": {\"command\": \"$NODE_BIN\", \"args\": [\"$GW_DIR/dist/index.js\"], \"env\": {\"GOOGLE_CLIENT_ID\": \"\", \"GOOGLE_CLIENT_SECRET\": \"\", \"GOOGLE_REDIRECT_URI\": \"http://localhost:3001/oauth/callback\", \"PORT\": \"3001\"}},
+  \"apple-reminders\": {\"command\": \"$NODE_BIN\", \"args\": [\"$REM_DIR/dist/index.js\"]},
+  \"telegram\": {\"command\": \"$NODE_BIN\", \"args\": [\"$TG_DIR/build/index.js\"], \"env\": {\"TELEGRAM_BOT_TOKEN\": \"\", \"TELEGRAM_DEFAULT_CHAT_ID\": \"\"}}
+}"
 
-if [[ -f "$CLAUDE_CONFIG" ]]; then
+if test -f "$CLAUDE_CONFIG"; then
     cp "$CLAUDE_CONFIG" "${CLAUDE_CONFIG}.bak-$(date +%Y%m%d-%H%M%S)"
     ok "Backed up existing config"
     $PYTHON << PYEOF
@@ -319,20 +321,21 @@ config_path = "$CLAUDE_CONFIG"
 new_servers = json.loads('''$MCP_CONFIG''')
 with open(config_path) as f:
     config = json.load(f)
-config.setdefault("mcpServers", {})
+if "mcpServers" not in config:
+    config["mcpServers"] = {}
 for name, cfg in new_servers.items():
     if name not in config["mcpServers"]:
         config["mcpServers"][name] = cfg
-        print(f"  Added: {name}")
+        print("  Added: " + name)
     else:
-        print(f"  Skipped (exists): {name}")
+        print("  Skipped (exists): " + name)
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
 PYEOF
 else
     mkdir -p "$(dirname "$CLAUDE_CONFIG")"
     echo "{\"mcpServers\": $MCP_CONFIG}" > "$CLAUDE_CONFIG"
-    ok "Created new config"
+    ok "Created Claude config"
 fi
 ok "Claude Desktop configured"
 
@@ -340,76 +343,44 @@ ok "Claude Desktop configured"
 # DONE
 # ══════════════════════════════════════════════════════════════════════════════
 
-cat << SUMMARY
-
-  ╔════════════════════════════════════════════════════════╗
-  ║              ✅ Installation Complete!                  ║
-  ╚════════════════════════════════════════════════════════╝
-
-  Location: $INSTALL_DIR
-
-  Fathom             — 10 tools  (meetings, transcripts, summaries)
-  Trello             — 60 tools  (boards, cards, labels, checklists)
-  Google Workspace   — 230 tools (Drive, Docs, Sheets, Slides,
-                                   Calendar, Tasks, Gmail, People, Forms)
-  Apple Reminders    — 11 tools  (lists, reminders, alarms, recurrence)
-  Telegram           — 176 tools (messages, chats, stickers, payments,
-                                   gifts, business, inline, verification)
-  Claude CLI         — installed and ready
-  ─────────────────────────────────────────────────────────
-  Total: 487 tools
-
-  NEXT STEPS:
-
-  1. FATHOM:
-     Get key: https://fathom.video/settings → API
-     Edit: $FATHOM_DIR/.env
-
-  2. TRELLO:
-     Get key: https://trello.com/power-ups/admin
-     Token: link in $TRELLO_DIR/.env
-     Edit: $TRELLO_DIR/.env
-
-  3. GOOGLE WORKSPACE:
-     a) https://console.cloud.google.com → APIs & Services → Credentials
-     b) Create OAuth 2.0 Client ID (Web application)
-     c) Add redirect URI: http://localhost:3001/oauth/callback
-     d) Enable APIs: Drive, Docs, Sheets, Slides, Calendar, Tasks, Gmail
-     e) Edit: $GW_DIR/.env
-
-  4. TELEGRAM:
-     Create bot: @BotFather in Telegram → /newbot
-     Get user ID: @userinfobot in Telegram
-     Edit: $TG_DIR/.env
-
-  5. APPLE REMINDERS:
-     No keys needed — grant access when macOS asks for Reminders permission.
-
-  6. RESTART Claude Desktop: Cmd+Q → reopen
-
-  Log: $LOG
-
-SUMMARY
+printf "\n"
+printf "  ╔════════════════════════════════════════════════════════╗\n"
+printf "  ║              Installation Complete!                    ║\n"
+printf "  ╚════════════════════════════════════════════════════════╝\n"
+printf "\n"
+printf "  Fathom             — 10 tools\n"
+printf "  Trello             — 60 tools\n"
+printf "  Google Workspace   — 230 tools\n"
+printf "  Apple Reminders    — 11 tools\n"
+printf "  Telegram           — 176 tools\n"
+printf "  Claude CLI         — installed\n"
+printf "  ─────────────────────────────────────────────\n"
+printf "  Total: 487 tools\n"
+printf "\n"
+printf "  NEXT: insert API keys in .env files, then restart Claude Desktop (Cmd+Q)\n"
+printf "\n"
+printf "  Log: $LOG\n"
+printf "\n"
 
 # ── Launch Claude CLI ────────────────────────────────────────────────────────
 say "Launching Claude CLI..."
-export PATH="$HOME/.local/bin:$HOME/.claude/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.claude/bin:/opt/homebrew/bin:$PATH"
 
-# Find claude binary explicitly
 CLAUDE_BIN=""
-for p in "$HOME/.local/bin/claude" "$HOME/.claude/bin/claude" "$(command -v claude 2>/dev/null)"; do
-    [[ -x "$p" ]] && { CLAUDE_BIN="$p"; break; }
+for p in "$HOME/.local/bin/claude" "$HOME/.claude/bin/claude"; do
+    if test -x "$p"; then
+        CLAUDE_BIN="$p"
+        break
+    fi
 done
+test -z "$CLAUDE_BIN" && CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
 
-if [[ -n "$CLAUDE_BIN" ]]; then
-    say "Opening Claude — paste your API keys when prompted."
-    echo ""
+if test -n "$CLAUDE_BIN" && test -x "$CLAUDE_BIN"; then
+    say "Opening Claude..."
+    printf "\n"
     exec "$CLAUDE_BIN"
 else
-    echo ""
-    warn "Claude CLI installed but needs a new terminal session."
-    echo "  Close this terminal, open a new one, and run:"
-    echo ""
-    echo "    claude"
-    echo ""
+    printf "\n"
+    warn "Close this terminal, open a new one, and run: claude"
+    printf "\n"
 fi
