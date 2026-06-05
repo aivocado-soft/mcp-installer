@@ -23,6 +23,7 @@ die()  { err "$*"; exit 1; }
 # Log to file (append, don't use process substitution — bash 3.2 unreliable)
 touch "$LOG"
 chmod 600 "$LOG"
+FAILURES=0
 
 printf "\n"
 printf "  ╔════════════════════════════════════════════════════════╗\n"
@@ -53,6 +54,8 @@ if test -z "$SCRIPT_DIR" || test ! -d "$SCRIPT_DIR/packages"; then
         "$REPO_URL/archive/refs/heads/main.tar.gz" | tar -xz -C "$REPO_DIR" --strip-components=1
     test -f "$REPO_DIR/install.sh" || die "Download failed. Check internet connection."
     ok "Downloaded"
+    # Clean up temp dir on exit (trap survives exec in the re-executed script)
+    trap "rm -rf '$REPO_DIR' 2>/dev/null" EXIT
     exec bash "$REPO_DIR/install.sh" "$@"
 fi
 
@@ -186,13 +189,18 @@ if command -v claude > /dev/null 2>&1; then
     ok "Claude CLI ready"
 else
     say "Installing Claude CLI..."
-    curl -fsSL https://claude.ai/install.sh | sh
+    /bin/sh -c "$(curl -fsSL --connect-timeout 15 --max-time 120 https://claude.ai/install.sh)" || true
     export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"
     touch "$HOME/.zshrc"
     if ! grep -q '.claude/bin' "$HOME/.zshrc" 2>/dev/null; then
         echo 'export PATH="$HOME/.local/bin:$HOME/.claude/bin:$PATH"' >> "$HOME/.zshrc"
     fi
-    ok "Claude CLI installed"
+    if command -v claude > /dev/null 2>&1; then
+        ok "Claude CLI installed"
+    else
+        warn "Claude CLI install failed — run manually: curl -fsSL https://claude.ai/install.sh | sh"
+        FAILURES=$((FAILURES + 1))
+    fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -213,7 +221,7 @@ install_python_mcp() {
     if test ! -d "$dir/.venv/bin"; then
         $PYTHON -m venv "$dir/.venv" || { warn "$name: venv creation failed"; return; }
     fi
-    "$dir/.venv/bin/pip" install -q -r "$dir/requirements.txt" >> "$LOG" 2>&1 || { warn "$name: pip install failed (check $LOG)"; return; }
+    "$dir/.venv/bin/pip" install -q -r "$dir/requirements.txt" >> "$LOG" 2>&1 || { warn "$name: pip install failed (check $LOG)"; FAILURES=$((FAILURES + 1)); return; }
     ok "$name MCP — $tools tools"
 }
 
@@ -249,12 +257,12 @@ cp "$PACKAGES_DIR/google-workspace/package.json" "$GW_DIR/"
 cp "$PACKAGES_DIR/google-workspace/package-lock.json" "$GW_DIR/" 2>/dev/null
 cp "$PACKAGES_DIR/google-workspace/tsconfig.json" "$GW_DIR/"
 cd "$GW_DIR"
-npm install >> "$LOG" 2>&1 || { warn "Google Workspace: npm install failed (check $LOG)"; }
-npm run build >> "$LOG" 2>&1 || { warn "Google Workspace: build failed (check $LOG)"; }
+npm install >> "$LOG" 2>&1 || { warn "Google Workspace: npm install failed (check $LOG)"; FAILURES=$((FAILURES + 1)); }
+npm run build >> "$LOG" 2>&1 || { warn "Google Workspace: build failed (check $LOG)"; FAILURES=$((FAILURES + 1)); }
 if test -f "$GW_DIR/dist/index.js"; then
     ok "Google Workspace MCP — 230 tools"
 else
-    warn "Google Workspace: build incomplete — check $LOG"
+    warn "Google Workspace: build incomplete"; FAILURES=$((FAILURES + 1))
 fi
 if test ! -f "$GW_DIR/.env"; then
     umask 077
@@ -287,9 +295,9 @@ if test -d "$PACKAGES_DIR/apple-reminders"; then
     if test ! -f "$REM_DIR/dist/index.js"; then
         cd "$REM_DIR"
         npm install >> "$LOG" 2>&1
-        npm run build >> "$LOG" 2>&1 || true
+        npm run build >> "$LOG" 2>&1 || warn "Apple Reminders: npm build failed (check $LOG)"
     fi
-    test -f "$REM_DIR/dist/index.js" && ok "Apple Reminders MCP — 11 tools" || warn "Apple Reminders: build incomplete"
+    test -f "$REM_DIR/dist/index.js" && ok "Apple Reminders MCP — 11 tools" || warn "Apple Reminders: build incomplete"; FAILURES=$((FAILURES + 1))
 fi
 
 # ── 2e. Telegram ─────────────────────────────────────────────────────────────
@@ -298,14 +306,14 @@ TG_DIR="$INSTALL_DIR/telegram"
 if test -d "$PACKAGES_DIR/telegram"; then
     mkdir -p "$TG_DIR"
     # Use cp instead of rsync for portability
-    find "$PACKAGES_DIR/telegram" -maxdepth 1 -not -name 'node_modules' -not -name '.git' -not -name '.' \
+    find "$PACKAGES_DIR/telegram" -mindepth 1 -maxdepth 1 -not -name 'node_modules' -not -name '.git' \
         -exec cp -R {} "$TG_DIR/" \; 2>/dev/null
     cd "$TG_DIR"
-    npm install >> "$LOG" 2>&1 || { warn "Telegram: npm install failed (check $LOG)"; }
+    npm install >> "$LOG" 2>&1 || { warn "Telegram: npm install failed (check $LOG)"; FAILURES=$((FAILURES + 1)); }
     if test ! -f "$TG_DIR/build/index.js"; then
-        npm run build >> "$LOG" 2>&1 || { warn "Telegram: build failed (check $LOG)"; }
+        npm run build >> "$LOG" 2>&1 || { warn "Telegram: build failed (check $LOG)"; FAILURES=$((FAILURES + 1)); }
     fi
-    test -f "$TG_DIR/build/index.js" && ok "Telegram MCP — 176 tools" || warn "Telegram: build incomplete"
+    test -f "$TG_DIR/build/index.js" && ok "Telegram MCP — 176 tools" || warn "Telegram: build incomplete"; FAILURES=$((FAILURES + 1))
     if test ! -f "$TG_DIR/.env"; then
         umask 077
         cat > "$TG_DIR/.env" << 'ENVEOF'
@@ -381,14 +389,18 @@ printf "  ╔══════════════════════�
 printf "  ║              Installation Complete!                    ║\n"
 printf "  ╚════════════════════════════════════════════════════════╝\n"
 printf "\n"
-printf "  Fathom             — 10 tools\n"
-printf "  Trello             — 60 tools\n"
-printf "  Google Workspace   — 230 tools\n"
-printf "  Apple Reminders    — 11 tools\n"
-printf "  Telegram           — 176 tools\n"
-printf "  Claude CLI         — installed\n"
+test -f "$FATHOM_DIR/.venv/bin/pip" && printf "  Fathom             — 10 tools\n" || printf "  Fathom             — FAILED\n"
+test -f "$TRELLO_DIR/.venv/bin/pip" && printf "  Trello             — 60 tools\n" || printf "  Trello             — FAILED\n"
+test -f "$GW_DIR/dist/index.js" && printf "  Google Workspace   — 230 tools\n" || printf "  Google Workspace   — FAILED\n"
+test -f "$REM_DIR/dist/index.js" && printf "  Apple Reminders    — 11 tools\n" || printf "  Apple Reminders    — FAILED\n"
+test -f "$TG_DIR/build/index.js" && printf "  Telegram           — 176 tools\n" || printf "  Telegram           — FAILED\n"
+command -v claude > /dev/null 2>&1 && printf "  Claude CLI         — installed\n" || printf "  Claude CLI         — FAILED\n"
 printf "  ─────────────────────────────────────────────\n"
-printf "  Total: 487 tools\n"
+if test "$FAILURES" -eq 0; then
+    printf "  Total: 487 tools — all OK\n"
+else
+    printf "  Some components failed (%s warnings). Check: $LOG\n" "$FAILURES"
+fi
 printf "\n"
 printf "  NEXT: insert API keys in .env files, then restart Claude Desktop (Cmd+Q)\n"
 printf "  Log: $LOG\n"
